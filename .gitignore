@@ -1,4 +1,7 @@
 .vscode
+.conda-pkgs/
+.envs/
+.mamba-root/
 example_demo_session
 data
 data_local

@@ -1,0 +1,26 @@
+name: umi-blackwell-train
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy=1.24
+  - scipy=1.11
+  - pandas=2.1
+  - pyyaml=6.0
+  - tqdm=4.65
+  - zarr=2.16
+  - numcodecs=0.11
+  - hydra-core=1.2.0
+  - wandb=0.15.8
+  - dill=0.3.7
+  - einops=0.6.1
+  - diffusers=0.18.2
+  - python-lmdb=1.4
+  - timm=0.9.7
+  - accelerate=0.24
+  - imagecodecs=2023.9.18
+  - threadpoolctl=3.2
+  - filelock
+  - huggingface_hub=0.25.2
+  - protobuf=4.25
