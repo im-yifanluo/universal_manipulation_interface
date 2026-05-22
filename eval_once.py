@@ -564,15 +564,31 @@ def main(input, output, robot_config,
                         current_pose = np.asarray(current_pose)
 
                         num_actions_executed = len(this_target_poses)
+                        input_log_path = pred_log_dir / f"inference_input_{pred_log_idx:06d}.npz"
                         pred_log_record = {
                             "phase": "policy",
                             "log_idx": int(pred_log_idx),
+                            "input_log_path": str(input_log_path),
                             "current_pose": current_pose.tolist(),
                             "full_horizon_prediction": full_horizon_prediction.tolist(),
                             "num_actions_executed": int(num_actions_executed),
                         }
                         with open(pred_log_path, "a") as f:
                             f.write(json.dumps(pred_log_record) + "\n")
+                        
+                        np.savez_compressed(
+                            input_log_path,
+                            current_pose=current_pose,
+                            camera0_rgb_env=obs["camera0_rgb"],
+                            camera0_rgb_policy=obs_dict_np["camera0_rgb"],
+                            robot0_eef_pos=obs["robot0_eef_pos"],
+                            robot0_eef_rot_axis_angle=obs["robot0_eef_rot_axis_angle"],
+                            robot0_gripper_width=obs["robot0_gripper_width"],
+                            policy_robot0_eef_pos=obs_dict_np["robot0_eef_pos"],
+                            policy_robot0_eef_rot_axis_angle=obs_dict_np["robot0_eef_rot_axis_angle"],
+                            policy_robot0_gripper_width=obs_dict_np["robot0_gripper_width"],
+                            policy_robot0_eef_rot_axis_angle_wrt_start=obs_dict_np["robot0_eef_rot_axis_angle_wrt_start"],
+                        )
 
                         print("[pred-only policy]")
                         print("current_pose:")
