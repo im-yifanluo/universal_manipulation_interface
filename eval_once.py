@@ -579,6 +579,8 @@ def main(input, output, robot_config,
                         np.savez_compressed(
                             input_log_path,
                             current_pose=current_pose,
+                            episode_start_pose=np.asarray(episode_start_pose),
+                            obs_timestamps=obs_timestamps,
                             camera0_rgb_env=obs["camera0_rgb"],
                             camera0_rgb_policy=obs_dict_np["camera0_rgb"],
                             robot0_eef_pos=obs["robot0_eef_pos"],
