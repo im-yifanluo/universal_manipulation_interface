@@ -31,8 +31,8 @@ register_codecs()
 # ===== Variables =====
 
 CKPT_PATH = "checkpoints/latest.ckpt"
-INPUT_NPZ_PATH = "data/debug_grasp_cube_53/inference_input_000000.npz"
-OUTPUT_DIR = None
+INPUT_NPZ_PATH = "data/debug_grasp_cube_53/inference_input_000003.npz"
+OUTPUT_DIR = "data/debug_grasp_cube_53"
 DEVICE = "cuda:0"
 
 # ===== Inference Functions =====
