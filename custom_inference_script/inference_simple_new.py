@@ -1,4 +1,6 @@
 import time
+import pathlib
+import sys
 import cv2
 import numpy as np
 import torch
@@ -7,6 +9,11 @@ import hydra
 import rtde_control
 import rtde_receive
 from scipy.spatial.transform import Rotation as R
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
