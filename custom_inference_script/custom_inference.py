@@ -70,11 +70,9 @@ def interpolate_between_widths (start_width, end_width, interpolation_factor):
     return width_interpolated
 
 
-class DiffusionPolicyInference (Node):
+class DiffusionPolicyInference ():
     
     def __init__ (self, ckpt_path):
-
-        super().__init__('diffusion_policy_inference')
 
         # simple logging
         self.timestep_limit = 500
