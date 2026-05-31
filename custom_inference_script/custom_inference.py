@@ -15,10 +15,10 @@ from umi.real_world.real_inference_util import (
     get_real_umi_action,
 )
 
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
+# import rclpy
+# from rclpy.node import Node
+# from sensor_msgs.msg import Image
+# from cv_bridge import CvBridge
 
 
 H = 240
@@ -146,25 +146,18 @@ class DiffusionPolicyInference (Node):
 
         # ===== ros init =====
 
-        self.cvbridge = CvBridge()
-        self.realsense_sub = self.create_subscription(Image, 'realsense_images', self.callback, 1)
+        # self.cvbridge = CvBridge()
+        # self.realsense_sub = self.create_subscription(Image, 'realsense_images', self.callback, 1)
 
 
-    def close(self):
-        try:
-            self.wsg.__exit__(None, None, None)
-        except Exception as e:
-            self.get_logger().warning(f"Failed to close WSG connection cleanly: {e}")
+    # def close(self):
+    #     try:
+    #         self.wsg.__exit__(None, None, None)
+    #     except Exception as e:
+    #         self.get_logger().warning(f"Failed to close WSG connection cleanly: {e}")
 
 
-    def callback (self, realsense_msg):
-
-        # convert message
-        realsense_images = self.cvbridge.imgmsg_to_cv2(realsense_msg, 'passthrough')
-
-        # left half is wrist cam image, right half is front cam image
-        wrist_image = realsense_images[:, :W, :].copy()
-        front_image = realsense_images[:, W:, :].copy()
+    def callback ():
 
         # robot_pose is [x, y, z, rx, ry, rz]
         robot_pose = np.array(self.rtde_r.getActualTCPPose())
@@ -289,74 +282,141 @@ class DiffusionPolicyInference (Node):
         trajectory_gripper = np.array(trajectory_gripper).reshape((len(trajectory_gripper), 1))
         actions = np.hstack((trajectory_pos, trajectory_rotvec, trajectory_gripper))
 
-        # execute actions one by one at data frequency
-        for action in actions:
+        # # execute actions one by one at data frequency
+        # for action in actions:
 
-            if last_action_timestamp is not None:
-                cur_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
-                cur_fps = 1./(cur_timestamp - last_action_timestamp)
-                self.get_logger().info("Running inference at {} fps".format(cur_fps))
-            last_action_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
+        #     if last_action_timestamp is not None:
+        #         cur_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
+        #         cur_fps = 1./(cur_timestamp - last_action_timestamp)
+        #         self.get_logger().info("Running inference at {} fps".format(cur_fps))
+        #     last_action_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
 
-            target_pose = action[0:6]
-            # if requested robot movement too large, ignore it
-            if np.average(np.abs(target_pose[0:3] - np.array(self.rtde_r.getActualTCPPose())[0:3])) > 0.05:
-                self.get_logger().warning('Requested robot movement too large! Not executing. Diff: {}'.format(np.round(target_pose - np.array(self.rtde_r.getActualTCPPose()), 3)))
-            else:
-                self.rtde_c.servoL(target_pose, 0.01, 0.01, 1./CONTROL_FREQUENCY, 0.05, 100)  # params: pose, speed, accel, time, lookahead_time, gain
+        #     target_pose = action[0:6]
+        #     # if requested robot movement too large, ignore it
+        #     if np.average(np.abs(target_pose[0:3] - np.array(self.rtde_r.getActualTCPPose())[0:3])) > 0.05:
+        #         self.get_logger().warning('Requested robot movement too large! Not executing. Diff: {}'.format(np.round(target_pose - np.array(self.rtde_r.getActualTCPPose()), 3)))
+        #     else:
+        #         self.rtde_c.servoL(target_pose, 0.01, 0.01, 1./CONTROL_FREQUENCY, 0.05, 100)  # params: pose, speed, accel, time, lookahead_time, gain
 
-            target_gripper_width = np.clip(action[-1], 0.0, 0.09) * 1000.0
-            # if the requested movement is too large, ignore it
-            if abs(target_gripper_width - gripper_width) > 40.:
-                self.get_logger().warning('Requested gripper movement too large! Not executing. Diff: {}'.format(target_gripper_width - gripper_width))
-            else:
-                info = self.wsg.script_position_pd(
-                    position = target_gripper_width,
-                    velocity = self.gripper_velocity, 
-                    blocked_force_limit = 20, 
-                    kp = self.gripper_kp, 
-                    kd = self.gripper_kd,
-                )
-                gripper_width = info["position"]
+        #     target_gripper_width = np.clip(action[-1], 0.0, 0.09) * 1000.0
+        #     # if the requested movement is too large, ignore it
+        #     if abs(target_gripper_width - gripper_width) > 40.:
+        #         self.get_logger().warning('Requested gripper movement too large! Not executing. Diff: {}'.format(target_gripper_width - gripper_width))
+        #     else:
+        #         info = self.wsg.script_position_pd(
+        #             position = target_gripper_width,
+        #             velocity = self.gripper_velocity, 
+        #             blocked_force_limit = 20, 
+        #             kp = self.gripper_kp, 
+        #             kd = self.gripper_kd,
+        #         )
+        #         gripper_width = info["position"]
 
-            # append received trajectory
-            self.trajectory_received.append(action)
+        #     # append received trajectory
+        #     self.trajectory_received.append(action)
             
-            # append executed trajectory
-            self.trajectory_executed.append(self.rtde_r.getActualTCPPose() + [gripper_width])
+        #     # append executed trajectory
+        #     self.trajectory_executed.append(self.rtde_r.getActualTCPPose() + [gripper_width])
 
-            if len(self.trajectory_received) >= self.timestep_limit:
-                np.savez(
-                    'trajectory.npz', 
-                    trajectory_received = self.trajectory_received,
-                    trajectory_executed = self.trajectory_executed,
-                )
-                self.get_logger().info('Saved received trajectory.')
-                rclpy.shutdown()
+        #     if len(self.trajectory_received) >= self.timestep_limit:
+        #         np.savez(
+        #             'trajectory.npz', 
+        #             trajectory_received = self.trajectory_received,
+        #             trajectory_executed = self.trajectory_executed,
+        #         )
+        #         # self.get_logger().info('Saved received trajectory.')
+        #         # rclpy.shutdown()
             
-            # sleep until next action execution
-            cur_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
-            if cur_timestamp - last_action_timestamp < 1./CONTROL_FREQUENCY:
-                time.sleep(1./CONTROL_FREQUENCY - (cur_timestamp - last_action_timestamp))
+        #     # sleep until next action execution
+        #     cur_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
+        #     if cur_timestamp - last_action_timestamp < 1./CONTROL_FREQUENCY:
+        #         time.sleep(1./CONTROL_FREQUENCY - (cur_timestamp - last_action_timestamp))
             
-        # udpate last action
-        self.last_action = actions[-1].copy()
+        # # udpate last action
+        # self.last_action = actions[-1].copy()
 
 
 def main (args=None):
 
     ckpt_path = 'data/outputs/2026.05.29/04.24.23_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt'
 
-    rclpy.init(args=args)
-    dp_inference_node = None
-    try:
-        dp_inference_node = DiffusionPolicyInference(ckpt_path)
-        rclpy.spin(dp_inference_node)
-    finally:
-        if dp_inference_node is not None:
-            dp_inference_node.close()
-            dp_inference_node.destroy_node()
-        rclpy.shutdown()
+    # simple logging
+    self.timestep_limit = 500
+    self.trajectory_received = []
+    self.trajectory_executed = []
+    
+    # for interpolation
+    self.interpolation_factor = CONTROL_FREQUENCY / DATA_FREQUENCY
+    self.last_action = None
+
+
+    # ===== gripper init =====
+
+    # gripper init
+    self.wsg = WSGBinaryDriver(hostname="192.168.1.20", port=1000)
+    self.wsg.__enter__()
+    self.wsg.ack_fault()
+
+    # gripper pd control
+    self.gripper_velocity = 30.
+    self.gripper_kp = 15.
+    self.gripper_kd = 0.001
+    self.gripper_step = 5.  # mm
+
+    # move gripper to starting width
+    self.wsg.pre_position(STARTING_GRIPPER_WIDTH, 100)
+
+
+    # ===== robot init =====
+
+    # rtde initialization
+    self.rtde_c = rtde_control.RTDEControlInterface("192.168.1.12")
+    self.rtde_r = rtde_receive.RTDEReceiveInterface("192.168.1.12")
+
+    # move the robot to starting position
+    self.rtde_c.moveL(STARTING_POSE, 0.1, 0.1, False)  # should be blocking
+
+
+    # ===== diffusion policy init =====
+
+    # load checkpoint
+    payload = torch.load(open(ckpt_path, 'rb'), map_location='cpu', pickle_module=dill)
+    cfg = payload['cfg']
+    cls = hydra.utils.get_class(cfg._target_)
+
+    # # if need to overwrite
+    # cfg['policy']['num_inference_steps'] = 10
+
+    workspace = cls(cfg)
+    workspace: BaseWorkspace
+    workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+
+    # get policy from workspace
+    self.policy = workspace.model
+    if cfg.training.use_ema:
+        self.policy = workspace.ema_model
+    
+    self.cfg = cfg
+    self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
+    self.action_pose_repr = cfg.task.pose_repr.action_pose_repr
+    self.episode_start_pose = None
+    self.policy.num_inference_steps = 16
+    self.policy.to(torch.device('cuda:0'))
+    self.policy.eval()
+    self.device = self.policy.device
+
+    # self.rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
+
+    # rclpy.init(args=args)
+    # dp_inference_node = None
+    # try:
+    #     dp_inference_node = DiffusionPolicyInference(ckpt_path)
+    #     rclpy.spin(dp_inference_node)
+    # finally:
+    #     if dp_inference_node is not None:
+    #         dp_inference_node.close()
+    #         dp_inference_node.destroy_node()
+    #     rclpy.shutdown()
 
 
 if __name__ == '__main__':
