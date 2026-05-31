@@ -185,3 +185,4 @@ replay_buffer.zarr/
 videos/
 *.hdf5
 *.zarr.zip
+checkpoints/
