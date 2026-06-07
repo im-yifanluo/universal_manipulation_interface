@@ -1,0 +1,27 @@
+{
+  "dataset_path": "custom_data_pipeline/validation_dataset/validation_dataset.zarr.zip",
+  "pred_shape": [
+    459,
+    16,
+    10
+  ],
+  "gt_shape": [
+    459,
+    16,
+    10
+  ],
+  "action_horizon": 16,
+  "action_down_sample_steps": 3,
+  "sample_metadata_keys": [
+    "dataset_index",
+    "episode_id",
+    "episode_timestep",
+    "before_first_grasp",
+    "base_eef_pos",
+    "base_eef_rot_axis_angle"
+  ],
+  "num_unique_episodes": 1,
+  "episode_ids": [
+    0
+  ]
+}
