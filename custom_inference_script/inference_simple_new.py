@@ -24,7 +24,7 @@ import pyrealsense2 as rs
 H = 240
 W = 320
 STARTING_POSE = np.array([-0.25, -0.45, 0.4, 0, np.pi, 0])
-STARTING_GRIPPER_WIDTH = 105.
+STARTING_GRIPPER_WIDTH = 90.
 MAX_GRIPPER_WIDTH = 110.
 DATA_FREQUENCY = 10.
 SLOP = 0.02
