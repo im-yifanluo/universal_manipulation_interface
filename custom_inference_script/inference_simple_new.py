@@ -1,4 +1,6 @@
 import time
+import pathlib
+import sys
 import cv2
 import numpy as np
 import torch
@@ -7,6 +9,11 @@ import hydra
 import rtde_control
 import rtde_receive
 from scipy.spatial.transform import Rotation as R
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
@@ -45,6 +52,7 @@ class DiffusionPolicyInference ():
         self.wsg = WSGBinaryDriver(hostname="192.168.1.20", port=1000)
         self.wsg.__enter__()
         self.wsg.ack_fault()
+        self.wsg.homing(positive_direction=True, wait=True)
 
         # gripper pd control
         self.gripper_velocity = 30.
@@ -180,6 +188,7 @@ class DiffusionPolicyInference ():
         info = self.wsg.script_query()
         gripper_width = info["position"]
         gripper_width_m = np.float32(np.clip(gripper_width / 1000.0, 0.0, 0.09))
+        print(f"Gripper width (m): {gripper_width:.3f}")
 
         eef_pos = eef_pos.astype(np.float32)
         eef_rot_axis_angle = robot_pose[3:6].astype(np.float32)
@@ -237,42 +246,44 @@ class DiffusionPolicyInference ():
         if not np.all(np.isfinite(action_chunk)):
             raise RuntimeError("Nan or Inf action")
 
-        print("Predicted action chunk:", action_chunk)
+        # print("Predicted action chunk:", action_chunk)
 
         # execute actions one by one at data frequency
-        # for action in action_chunk:
+        for action in action_chunk:
 
-        #     cur_timestamp = time.monotonic()
-        #     if self.last_action_timestamp is not None:
-        #         cur_fps = 1. / (cur_timestamp - self.last_action_timestamp)
-        #     self.last_action_timestamp = cur_timestamp
+            cur_timestamp = time.monotonic()
+            if self.last_action_timestamp is not None:
+                cur_fps = 1. / (cur_timestamp - self.last_action_timestamp)
+            self.last_action_timestamp = cur_timestamp
 
-        #     target_pose = action[0:6]
-        #     # if requested robot movement too large, ignore it
-        #     if not np.average(np.abs(target_pose[0:3] - np.array(self.rtde_r.getActualTCPPose())[0:3])) > 0.05:
-        #         self.rtde_c.servoL(target_pose, 0.01, 0.01, 1./DATA_FREQUENCY, 0.05, 100)  # params: pose, speed, accel, time, lookahead_time, gain
-
-        #     target_gripper_width = np.clip(action[-1], 0.0, 0.09) * 1000.0
-        #     # if the requested movement is too large, ignore it
-        #     if not abs(target_gripper_width - gripper_width) > 40.:
-        #         info = self.wsg.script_position_pd(
-        #             position = target_gripper_width,
-        #             velocity = self.gripper_velocity, 
-        #             blocked_force_limit = 20, 
-        #             kp = self.gripper_kp, 
-        #             kd = self.gripper_kd,
-        #         )
-        #         gripper_width = info["position"]
+            target_pose = action[0:6]
+            # if requested robot movement too large, ignore it
+            if not np.average(np.abs(target_pose[0:3] - np.array(self.rtde_r.getActualTCPPose())[0:3])) > 0.05:
+                self.rtde_c.servoL(target_pose, 0.01, 0.01, 1./DATA_FREQUENCY, 0.05, 100)  # params: pose, speed, accel, time, lookahead_time, gain
             
-        #     # sleep until next action execution
-        #     cur_timestamp = time.monotonic()
-        #     if cur_timestamp - self.last_action_timestamp < 1./DATA_FREQUENCY:
-        #         time.sleep(1./DATA_FREQUENCY - (cur_timestamp - self.last_action_timestamp))
+            print(action[-1])
+
+            # target_gripper_width = np.clip(action[-1], 0.0, 0.09) * 1000.0
+            # # if the requested movement is too large, ignore it
+            # if not abs(target_gripper_width - gripper_width) > 40.:
+            #     info = self.wsg.script_position_pd(
+            #         position = target_gripper_width,
+            #         velocity = self.gripper_velocity, 
+            #         blocked_force_limit = 20, 
+            #         kp = self.gripper_kp, 
+            #         kd = self.gripper_kd,
+            #     )
+            #     gripper_width = info["position"]
+            
+            # sleep until next action execution
+            cur_timestamp = time.monotonic()
+            if cur_timestamp - self.last_action_timestamp < 1./DATA_FREQUENCY:
+                time.sleep(1./DATA_FREQUENCY - (cur_timestamp - self.last_action_timestamp))
 
 
 def main (args=None):
 
-    ckpt_path = 'placeholder.ckpt'
+    ckpt_path = 'checkpoints/latest(1).ckpt'
     
     dp_inference_node = DiffusionPolicyInference(ckpt_path)
     while True:
