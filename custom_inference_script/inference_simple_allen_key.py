@@ -296,7 +296,7 @@ class DiffusionPolicyInference ():
 
 def main (args=None):
 
-    ckpt_path = 'checkpoints/latest(1).ckpt'
+    ckpt_path = 'checkpoints/turn_knob/latest(2).ckpt'
     
     dp_inference_node = DiffusionPolicyInference(ckpt_path)
     while True:
