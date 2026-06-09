@@ -111,6 +111,7 @@ class DiffusionPolicyInference ():
 
         self.cfg = cfg
         self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
+        self.n_action_steps = int(cfg.get("n_action_steps", cfg.task.shape_meta.action.horizon))
         self.episode_start_pose = None
 
         self.policy.to(torch.device('cuda:0'))
@@ -258,6 +259,7 @@ class DiffusionPolicyInference ():
         
         raw_action = action_dict["action_pred"][0].detach().to("cpu").numpy()
         action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
+        action_chunk = action_chunk[:self.n_action_steps]
 
         if not np.all(np.isfinite(action_chunk)):
             raise RuntimeError("Nan or Inf action")
