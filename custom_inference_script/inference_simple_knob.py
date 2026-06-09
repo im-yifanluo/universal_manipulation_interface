@@ -41,7 +41,6 @@ MAX_GRIPPER_WIDTH = 110.
 DATASET_MAX_GRIPPER_WIDTH_M = 0.09
 DATA_FREQUENCY = 10.
 STEPS_PER_INFERENCE = 6
-ACTION_EXEC_LATENCY = 0.01
 SLOP = 0.02
 FPS = 30
 
@@ -273,18 +272,11 @@ class DiffusionPolicyInference ():
         
         raw_action = action_dict["action_pred"][0].detach().to("cpu").numpy()
         full_action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
-        dt = 1. / DATA_FREQUENCY
-        action_timestamps = np.arange(len(full_action_chunk), dtype=np.float64) * dt + obs_timestamp
-        curr_time = time.time()
-        is_new = action_timestamps > (curr_time + ACTION_EXEC_LATENCY)
-        if np.sum(is_new) == 0:
-            action_chunk = full_action_chunk[[-1]]
-            selected_action_indices = np.array([len(full_action_chunk) - 1], dtype=np.int64)
-            selected_action_timestamps = np.array([curr_time + dt], dtype=np.float64)
-        else:
-            selected_action_indices = np.flatnonzero(is_new)[:self.n_action_steps]
-            action_chunk = full_action_chunk[selected_action_indices]
-            selected_action_timestamps = action_timestamps[selected_action_indices]
+        selected_action_indices = np.arange(
+            min(self.n_action_steps, len(full_action_chunk)),
+            dtype=np.int64,
+        )
+        action_chunk = full_action_chunk[selected_action_indices]
 
         try:
             self.prediction_logger.log({
@@ -293,15 +285,12 @@ class DiffusionPolicyInference ():
                 "monotonic_time": time.monotonic(),
                 "inference_latency": inference_latency,
                 "data_frequency": DATA_FREQUENCY,
-                "action_exec_latency": ACTION_EXEC_LATENCY,
                 "n_action_steps": self.n_action_steps,
                 "ckpt_n_action_steps": self.ckpt_n_action_steps,
                 "raw_action_steps": int(raw_action.shape[0]),
                 "executed_action_steps": int(action_chunk.shape[0]),
                 "obs_timestamp": obs_timestamp,
-                "action_timestamps": action_timestamps.astype(float).tolist(),
                 "selected_action_indices": selected_action_indices.astype(int).tolist(),
-                "selected_action_timestamps": selected_action_timestamps.astype(float).tolist(),
                 "obs_pose_rep": str(self.obs_pose_rep),
                 "action_pose_repr": str(self.action_pose_repr),
                 "robot_pose": robot_pose.astype(float).tolist(),
