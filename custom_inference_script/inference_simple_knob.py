@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 from umi.real_world.wsg_binary_driver import WSGBinaryDriver
@@ -39,6 +40,7 @@ STARTING_GRIPPER_WIDTH = 85.
 MAX_GRIPPER_WIDTH = 110.
 DATASET_MAX_GRIPPER_WIDTH_M = 0.09
 DATA_FREQUENCY = 10.
+ACTION_EXEC_LATENCY = 0.01
 SLOP = 0.02
 FPS = 30
 
@@ -113,6 +115,13 @@ class DiffusionPolicyInference ():
         self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
         self.n_action_steps = int(cfg.get("n_action_steps", cfg.task.shape_meta.action.horizon))
         self.episode_start_pose = None
+        self.prediction_log_idx = 0
+        prediction_log_dir = REPO_ROOT / "prediction_logs"
+        prediction_log_dir.mkdir(parents=True, exist_ok=True)
+        prediction_log_path = prediction_log_dir / f"knob_predictions_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
+        self.prediction_logger = JsonLogger(str(prediction_log_path), filter_fn=lambda k, v: True)
+        self.prediction_logger.start()
+        print(f"Prediction log: {prediction_log_path}")
 
         self.policy.to(torch.device('cuda:0'))
         self.policy.eval()
@@ -205,6 +214,7 @@ class DiffusionPolicyInference ():
         info = self.wsg.script_query()
         gripper_width = info["position"]
         gripper_width_m = wsg_width_mm_to_policy_m(gripper_width)
+        obs_timestamp = time.time()
         print(f"Gripper width: {gripper_width:.3f} mm -> policy {gripper_width_m:.4f} m")
 
         eef_pos = eef_pos.astype(np.float32)
@@ -240,8 +250,10 @@ class DiffusionPolicyInference ():
         )
 
         # run policy
+        inference_start_time = time.time()
         with torch.no_grad():
             action_dict = self.policy.predict_action(obs_dict)
+        inference_latency = time.time() - inference_start_time
         # self.get_logger().info("Predicted new action chunk.")
         self.last_action_timestamp = None
 
@@ -258,8 +270,47 @@ class DiffusionPolicyInference ():
         # action_chunk[:, -1] *= MAX_GRIPPER_WIDTH
         
         raw_action = action_dict["action_pred"][0].detach().to("cpu").numpy()
-        action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
-        action_chunk = action_chunk[:self.n_action_steps]
+        full_action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
+        dt = 1. / DATA_FREQUENCY
+        action_timestamps = np.arange(len(full_action_chunk), dtype=np.float64) * dt + obs_timestamp
+        curr_time = time.time()
+        is_new = action_timestamps > (curr_time + ACTION_EXEC_LATENCY)
+        if np.sum(is_new) == 0:
+            action_chunk = full_action_chunk[[-1]]
+            selected_action_indices = np.array([len(full_action_chunk) - 1], dtype=np.int64)
+            selected_action_timestamps = np.array([curr_time + dt], dtype=np.float64)
+        else:
+            selected_action_indices = np.flatnonzero(is_new)[:self.n_action_steps]
+            action_chunk = full_action_chunk[selected_action_indices]
+            selected_action_timestamps = action_timestamps[selected_action_indices]
+
+        try:
+            self.prediction_logger.log({
+                "prediction_idx": self.prediction_log_idx,
+                "wall_time": time.time(),
+                "monotonic_time": time.monotonic(),
+                "inference_latency": inference_latency,
+                "data_frequency": DATA_FREQUENCY,
+                "action_exec_latency": ACTION_EXEC_LATENCY,
+                "n_action_steps": self.n_action_steps,
+                "raw_action_steps": int(raw_action.shape[0]),
+                "executed_action_steps": int(action_chunk.shape[0]),
+                "obs_timestamp": obs_timestamp,
+                "action_timestamps": action_timestamps.astype(float).tolist(),
+                "selected_action_indices": selected_action_indices.astype(int).tolist(),
+                "selected_action_timestamps": selected_action_timestamps.astype(float).tolist(),
+                "obs_pose_rep": str(self.obs_pose_rep),
+                "action_pose_repr": str(self.action_pose_repr),
+                "robot_pose": robot_pose.astype(float).tolist(),
+                "gripper_width_mm": float(gripper_width),
+                "gripper_width_policy_m": float(gripper_width_m),
+                "raw_action_pred": raw_action.astype(float).tolist(),
+                "full_action_chunk": full_action_chunk.astype(float).tolist(),
+                "executed_action_chunk": action_chunk.astype(float).tolist(),
+            })
+            self.prediction_log_idx += 1
+        except Exception as e:
+            print(f"Prediction logging failed: {e}")
 
         if not np.all(np.isfinite(action_chunk)):
             raise RuntimeError("Nan or Inf action")
