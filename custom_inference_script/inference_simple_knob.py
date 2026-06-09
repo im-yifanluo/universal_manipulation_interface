@@ -40,6 +40,7 @@ STARTING_GRIPPER_WIDTH = 85.
 MAX_GRIPPER_WIDTH = 110.
 DATASET_MAX_GRIPPER_WIDTH_M = 0.09
 DATA_FREQUENCY = 10.
+STEPS_PER_INFERENCE = 6
 ACTION_EXEC_LATENCY = 0.01
 SLOP = 0.02
 FPS = 30
@@ -113,7 +114,8 @@ class DiffusionPolicyInference ():
 
         self.cfg = cfg
         self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
-        self.n_action_steps = int(cfg.get("n_action_steps", cfg.task.shape_meta.action.horizon))
+        self.n_action_steps = STEPS_PER_INFERENCE
+        self.ckpt_n_action_steps = int(cfg.get("n_action_steps", cfg.task.shape_meta.action.horizon))
         self.episode_start_pose = None
         self.prediction_log_idx = 0
         prediction_log_dir = REPO_ROOT / "prediction_logs"
@@ -293,6 +295,7 @@ class DiffusionPolicyInference ():
                 "data_frequency": DATA_FREQUENCY,
                 "action_exec_latency": ACTION_EXEC_LATENCY,
                 "n_action_steps": self.n_action_steps,
+                "ckpt_n_action_steps": self.ckpt_n_action_steps,
                 "raw_action_steps": int(raw_action.shape[0]),
                 "executed_action_steps": int(action_chunk.shape[0]),
                 "obs_timestamp": obs_timestamp,
