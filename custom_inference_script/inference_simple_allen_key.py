@@ -38,7 +38,6 @@ DATA_FREQUENCY = 10.
 STEPS_PER_INFERENCE = 6
 SLOP = 0.02
 FPS = 30
-SKIP_FIRST_GRIPPER_PREDICTION = True
 
 
 def wsg_width_mm_to_policy_m(width_mm):
@@ -57,7 +56,6 @@ class DiffusionPolicyInference ():
 
         self.close_cur_episode = False
         self.last_action_timestamp = None
-        self.skip_first_gripper_prediction = SKIP_FIRST_GRIPPER_PREDICTION
         
 
         # ===== gripper init =====
@@ -266,11 +264,6 @@ class DiffusionPolicyInference ():
         if not np.all(np.isfinite(action_chunk)):
             raise RuntimeError("Nan or Inf action")
 
-        skip_gripper_this_prediction = self.skip_first_gripper_prediction
-        self.skip_first_gripper_prediction = False
-        if skip_gripper_this_prediction:
-            print("Skipping gripper commands for first policy prediction.")
-
         # print("Predicted action chunk:", action_chunk)
 
         # execute actions one by one at data frequency
@@ -290,9 +283,7 @@ class DiffusionPolicyInference ():
             print(f"Predicted gripper: {action[-1]:.4f} m -> target {target_gripper_width:.2f} mm")
 
             # if the requested movement is too large, ignore it
-            if skip_gripper_this_prediction:
-                pass
-            elif not abs(target_gripper_width - gripper_width) > 40.:
+            if not abs(target_gripper_width - gripper_width) > 40.:
                 info = self.wsg.script_position_pd(
                     position = target_gripper_width,
                     velocity = self.gripper_velocity, 
