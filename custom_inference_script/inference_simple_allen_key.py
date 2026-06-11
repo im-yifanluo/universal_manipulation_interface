@@ -35,7 +35,7 @@ STARTING_GRIPPER_WIDTH = 105.
 MAX_GRIPPER_WIDTH = 110.
 DATASET_MAX_GRIPPER_WIDTH_M = 0.09
 DATA_FREQUENCY = 10.
-STEPS_PER_INFERENCE = 8
+STEPS_PER_INFERENCE = 6
 SLOP = 0.02
 FPS = 30
 SKIP_FIRST_GRIPPER_PREDICTION = True
@@ -312,7 +312,7 @@ class DiffusionPolicyInference ():
 
 def main (args=None):
 
-    ckpt_path = 'checkpoints/turn_knob/latest(2).ckpt'
+    ckpt_path = 'checkpoints/latest(1).ckpt'
     
     dp_inference_node = DiffusionPolicyInference(ckpt_path)
     while True:
