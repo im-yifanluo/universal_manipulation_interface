@@ -35,6 +35,7 @@ STARTING_GRIPPER_WIDTH = 105.
 MAX_GRIPPER_WIDTH = 110.
 DATASET_MAX_GRIPPER_WIDTH_M = 0.09
 DATA_FREQUENCY = 10.
+STEPS_PER_INFERENCE = 8
 SLOP = 0.02
 FPS = 30
 
@@ -106,6 +107,7 @@ class DiffusionPolicyInference ():
 
         self.cfg = cfg
         self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
+        self.n_action_steps = STEPS_PER_INFERENCE
         self.episode_start_pose = None
 
         self.policy.to(torch.device('cuda:0'))
@@ -252,7 +254,12 @@ class DiffusionPolicyInference ():
         # action_chunk[:, -1] *= MAX_GRIPPER_WIDTH
         
         raw_action = action_dict["action_pred"][0].detach().to("cpu").numpy()
-        action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
+        full_action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
+        selected_action_indices = np.arange(
+            min(self.n_action_steps, len(full_action_chunk)),
+            dtype=np.int64,
+        )
+        action_chunk = full_action_chunk[selected_action_indices]
 
         if not np.all(np.isfinite(action_chunk)):
             raise RuntimeError("Nan or Inf action")
