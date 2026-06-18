@@ -1,4 +1,5 @@
 import time
+import argparse
 import cv2
 import numpy as np
 import torch
@@ -8,22 +9,15 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 import pyrealsense2 as rs
 from copy import deepcopy
-import copy
-import vedo
 import os
-from diffusion_policy.common.pose_repr_util import compute_relative_pose
-from diffusion_policy.common.pose_util import rot6d_to_mat, mat_to_rot6d
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.model.common.rotation_transformer import RotationTransformer, RotationTransformerUMI
 from umi.real_world.real_inference_util import get_real_umi_obs_dict, get_real_umi_action
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, Float32MultiArray
-from sensor_msgs.msg import Image
+from std_msgs.msg import Float32MultiArray
 from rocky_scripts_msgs.msg import StampedFloat32, StampedFloat32MultiArray
-from cv_bridge import CvBridge
 import message_filters
 
 
@@ -170,22 +164,8 @@ class DiffusionPolicyInference (Node):
         self.policy.eval()
         self.device = self.policy.device
 
-        self.rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
-
-        self.rot_quat2mat = RotationTransformerUMI(
-            from_rep='quaternion',
-            to_rep='matrix')
-        self.rot_aa2mat = RotationTransformerUMI(
-            from_rep='axis_angle',
-            to_rep='matrix')
-        self.rot_mat2rot6d = RotationTransformerUMI(
-            from_rep='matrix',
-            to_rep='rotation_6d')
-
 
         # ===== ros init =====
-
-        self.cvbridge = CvBridge()
 
         pose_sub = message_filters.Subscriber(self, StampedFloat32MultiArray, 'robot_pose')
         gripper_width_sub = message_filters.Subscriber(self, StampedFloat32, 'gripper_width')
@@ -492,11 +472,13 @@ class DiffusionPolicyInference (Node):
 
 def main (args=None):
 
-    ckpt_path = '/placeholder.ckpt'
-    results_path = '/placeholder'
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--ckpt_path', '--ckpt-path', dest='ckpt_path', required=True)
+    parser.add_argument('--results_path', '--results-path', dest='results_path', required=True)
+    parsed_args, ros_args = parser.parse_known_args(args)
 
-    rclpy.init(args=args)
-    dp_inference_node = DiffusionPolicyInference(ckpt_path, results_path)
+    rclpy.init(args=ros_args)
+    dp_inference_node = DiffusionPolicyInference(parsed_args.ckpt_path, parsed_args.results_path)
     rclpy.spin(dp_inference_node)
 
     dp_inference_node.destroy_node()
