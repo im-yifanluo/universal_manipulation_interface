@@ -46,12 +46,17 @@ FPS = 30
 
 
 def wsg_width_mm_to_policy_m(width_mm):
-    width_m = width_mm / 1000
+    # Training zarr was built from normalized HDF5 qpos:
+    #   robot0_gripper_width = gripper_qpos * DATASET_MAX_GRIPPER_WIDTH_M
+    # where gripper_qpos = wsg_width_mm / MAX_GRIPPER_WIDTH.
+    width_normalized = width_mm / MAX_GRIPPER_WIDTH
+    width_m = width_normalized * DATASET_MAX_GRIPPER_WIDTH_M
     return np.float32(np.clip(width_m, 0.0, DATASET_MAX_GRIPPER_WIDTH_M))
 
 
 def policy_width_m_to_wsg_mm(width_m):
-    width_mm = width_m * 1000
+    width_normalized = width_m / DATASET_MAX_GRIPPER_WIDTH_M
+    width_mm = width_normalized * MAX_GRIPPER_WIDTH
     return float(np.clip(width_mm, 0.0, MAX_GRIPPER_WIDTH))
 
 
