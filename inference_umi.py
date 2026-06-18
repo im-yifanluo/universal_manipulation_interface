@@ -84,10 +84,11 @@ def policy_width_m_to_wsg_mm(width_m):
 
 class DiffusionPolicyInference (Node):
     
-    def __init__ (self, ckpt_path, results_path):
+    def __init__ (self, ckpt_path, results_path, show_wrist=False):
 
         super().__init__('diffusion_policy_inference')
 
+        self.show_wrist = show_wrist
 
         if not os.path.exists(results_path):
             os.makedirs(results_path)
@@ -111,7 +112,7 @@ class DiffusionPolicyInference (Node):
         # ===== diffusion policy init =====
 
         # load checkpoint
-        payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill)
+        payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill, weights_only=False)
         cfg = payload['cfg']
         cls = hydra.utils.get_class(cfg._target_)
 
@@ -203,8 +204,9 @@ class DiffusionPolicyInference (Node):
         self.wrist_images.append(wrist_image.copy())
         wrist_image_vis = cv2.resize(wrist_image, (W, H))  # images are at higher resolution for visualization
 
-        cv2.imshow('wrist', cv2.cvtColor(wrist_image_vis, cv2.COLOR_RGB2BGR))
-        cv2.waitKey(1)
+        if self.show_wrist:
+            cv2.imshow('wrist', cv2.cvtColor(wrist_image_vis, cv2.COLOR_RGB2BGR))
+            cv2.waitKey(1)
 
         # convert messages
         robot_pose = self.cur_robot_pose.copy()
@@ -475,10 +477,11 @@ def main (args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpt_path', '--ckpt-path', dest='ckpt_path', required=True)
     parser.add_argument('--results_path', '--results-path', dest='results_path', required=True)
+    parser.add_argument('--show_wrist', '--show-wrist', dest='show_wrist', action='store_true')
     parsed_args, ros_args = parser.parse_known_args(args)
 
     rclpy.init(args=ros_args)
-    dp_inference_node = DiffusionPolicyInference(parsed_args.ckpt_path, parsed_args.results_path)
+    dp_inference_node = DiffusionPolicyInference(parsed_args.ckpt_path, parsed_args.results_path, parsed_args.show_wrist)
     rclpy.spin(dp_inference_node)
 
     dp_inference_node.destroy_node()

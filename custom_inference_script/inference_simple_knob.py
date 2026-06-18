@@ -355,8 +355,8 @@ def main (args=None):
     
 
     dp_inference_node = DiffusionPolicyInference(ckpt_path)
-    while True:
-        dp_inference_node.callback()
+    # while True:
+    #     dp_inference_node.callback()
 
     # rclpy.init(args=args)
     # rclpy.spin(dp_inference_node)
