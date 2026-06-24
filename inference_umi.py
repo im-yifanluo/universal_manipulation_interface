@@ -1,5 +1,6 @@
 import time
 import argparse
+import json
 import cv2
 import numpy as np
 import torch
@@ -94,8 +95,13 @@ class DiffusionPolicyInference (Node):
             os.makedirs(results_path)
 
         # to prevent overwriting
-        episode_id = len(os.listdir(results_path))
+        episode_id = 0
+        while os.path.exists('{}/{}'.format(results_path, episode_id)):
+            episode_id += 1
         self.episode_path = '{}/{}'.format(results_path, episode_id)
+        os.makedirs(self.episode_path)
+        self.prediction_debug_path = '{}/prediction_debug.jsonl'.format(self.episode_path)
+        open(self.prediction_debug_path, 'w').close()
 
 
         # ===== realsense initialization =====
@@ -119,9 +125,14 @@ class DiffusionPolicyInference (Node):
         # if need to overwrite
         # cfg['policy']['num_inference_steps'] = 10
         self.n_action_steps = 8
-        self.n_latency_steps = 1  # 0.1 seconds, should be more than enough
+        self.n_latency_steps = 1
         self.model_action_steps = self.n_action_steps + self.n_latency_steps
-        cfg['policy']['n_action_steps'] = self.model_action_steps  # match inference_umi_reference.py
+        self.action_down_sample_steps = int(
+            cfg.task.shape_meta.action.get('down_sample_steps', 1)
+        )
+        self.policy_action_frequency = DATA_FREQUENCY / self.action_down_sample_steps
+        # DiffusionUnetTimmPolicy returns the full action horizon and has no
+        # policy.n_action_steps config key; crop to model_action_steps after inference.
 
         self.cfg = cfg
         self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
@@ -135,9 +146,19 @@ class DiffusionPolicyInference (Node):
         self.finished_cur_traj = False
         self.next_traj_ready = False
         self.last_action = None  # this is the last action in the previous action chunk
-        self.interpolation_factor = CONTROL_FREQUENCY / DATA_FREQUENCY
+        self.interpolation_factor = int(round(CONTROL_FREQUENCY / self.policy_action_frequency))
         self.cur_traj = []
         self.next_traj = []
+
+        self.get_logger().info(
+            'Using policy action frequency {:.3f} Hz from base DATA_FREQUENCY {} Hz '
+            'and action.down_sample_steps {}. Interpolation factor: {}.'.format(
+                self.policy_action_frequency,
+                DATA_FREQUENCY,
+                self.action_down_sample_steps,
+                self.interpolation_factor,
+            )
+        )
 
         # for n_obs_steps (history)
         self.history_timestamps = []
@@ -219,9 +240,9 @@ class DiffusionPolicyInference (Node):
         eef_rot_axis_angle = robot_pose[3:6].copy()
         gripper_width_m = wsg_width_mm_to_policy_m(gripper_width)
 
-        camera_horizon = int(self.cfg.task.shape_meta.obs.camera0_rgb.horizon)
-        robot_horizon = int(self.cfg.task.shape_meta.obs.robot0_eef_pos.horizon)
-        gripper_horizon = int(self.cfg.task.shape_meta.obs.robot0_gripper_width.horizon)
+        camera_meta = self.cfg.task.shape_meta.obs.camera0_rgb
+        robot_meta = self.cfg.task.shape_meta.obs.robot0_eef_pos
+        gripper_meta = self.cfg.task.shape_meta.obs.robot0_gripper_width
 
         current_obs_sample = {
             "camera0_rgb": wrist_image,
@@ -232,8 +253,13 @@ class DiffusionPolicyInference (Node):
         history_times = np.array(self.history_timestamps + [cur_timestamp])
         history_samples = self.history_obs_dicts + [current_obs_sample]
 
-        def stack_history(key, horizon):
-            target_times = cur_timestamp - np.arange(horizon - 1, -1, -1) / DATA_FREQUENCY
+        def stack_history(key, meta):
+            horizon = int(meta.horizon)
+            down_sample_steps = int(meta.get('down_sample_steps', 1))
+            target_times = (
+                cur_timestamp
+                - np.arange(horizon - 1, -1, -1) * down_sample_steps / DATA_FREQUENCY
+            )
             indices = [
                 int(np.argmin(np.abs(history_times - target_time)))
                 for target_time in target_times
@@ -241,10 +267,10 @@ class DiffusionPolicyInference (Node):
             return np.stack([history_samples[index][key] for index in indices], axis=0)
 
         env_obs = {
-            "camera0_rgb": stack_history("camera0_rgb", camera_horizon),
-            "robot0_eef_pos": stack_history("robot0_eef_pos", robot_horizon),
-            "robot0_eef_rot_axis_angle": stack_history("robot0_eef_rot_axis_angle", robot_horizon),
-            "robot0_gripper_width": stack_history("robot0_gripper_width", gripper_horizon),
+            "camera0_rgb": stack_history("camera0_rgb", camera_meta),
+            "robot0_eef_pos": stack_history("robot0_eef_pos", robot_meta),
+            "robot0_eef_rot_axis_angle": stack_history("robot0_eef_rot_axis_angle", robot_meta),
+            "robot0_gripper_width": stack_history("robot0_gripper_width", gripper_meta),
         }
 
         if self.episode_start_pose is None:
@@ -362,6 +388,43 @@ class DiffusionPolicyInference (Node):
             # self.get_logger().info('next_traj length: {}'.format(len(self.next_traj)))
             # self.get_logger().info('eef pos: {}'.format(eef_pos))
             # self.get_logger().info('action chunk: {}'.format(action_chunk[:, 0:3]))
+
+            try:
+                action_pos_steps = np.linalg.norm(np.diff(action_chunk[:, :3], axis=0), axis=1)
+                traj_arr = np.asarray(self.next_traj, dtype=np.float32)
+                traj_pos_steps = (
+                    np.linalg.norm(np.diff(traj_arr[:, :3], axis=0), axis=1)
+                    if len(traj_arr) > 1
+                    else np.asarray([], dtype=np.float32)
+                )
+                debug_record = {
+                    "time": time.time(),
+                    "counter": int(self.counter),
+                    "raw_action_steps": int(raw_action.shape[0]),
+                    "selected_action_steps": int(action_chunk.shape[0]),
+                    "base_data_frequency": float(DATA_FREQUENCY),
+                    "action_down_sample_steps": int(self.action_down_sample_steps),
+                    "policy_action_frequency": float(self.policy_action_frequency),
+                    "interpolation_factor": float(self.interpolation_factor),
+                    "eef_pos": eef_pos.astype(float).tolist(),
+                    "first_target_pos": action_chunk[0, :3].astype(float).tolist(),
+                    "first_target_dist_m": float(np.linalg.norm(action_chunk[0, :3] - eef_pos)),
+                    "last_action_dist_m": (
+                        None
+                        if self.last_action is None
+                        else float(np.linalg.norm(self.last_action[:3] - eef_pos))
+                    ),
+                    "action_step_mean_m": float(np.mean(action_pos_steps)) if len(action_pos_steps) else 0.0,
+                    "action_step_max_m": float(np.max(action_pos_steps)) if len(action_pos_steps) else 0.0,
+                    "traj_len": int(len(self.next_traj)),
+                    "traj_step_mean_m": float(np.mean(traj_pos_steps)) if len(traj_pos_steps) else 0.0,
+                    "traj_step_max_m": float(np.max(traj_pos_steps)) if len(traj_pos_steps) else 0.0,
+                    "action_chunk_pos": action_chunk[:, :3].astype(float).tolist(),
+                }
+                with open(self.prediction_debug_path, 'a') as f:
+                    f.write(json.dumps(debug_record) + '\n')
+            except Exception as e:
+                self.get_logger().warning('Prediction debug logging failed: {}'.format(e), once=True)
 
             # updates
             self.next_traj_ready = True
