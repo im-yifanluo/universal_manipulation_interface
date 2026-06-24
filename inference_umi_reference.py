@@ -1,5 +1,4 @@
 import time
-import argparse
 import cv2
 import numpy as np
 import torch
@@ -9,23 +8,28 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 import pyrealsense2 as rs
 from copy import deepcopy
+import copy
+import vedo
 import os
+from diffusion_policy.common.pose_repr_util import compute_relative_pose
+from diffusion_policy.common.pose_util import rot6d_to_mat, mat_to_rot6d
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from umi.real_world.real_inference_util import get_real_umi_obs_dict, get_real_umi_action
+from diffusion_policy.model.common.rotation_transformer import RotationTransformer, RotationTransformerUMI
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32, Float32MultiArray
+from sensor_msgs.msg import Image
 from rocky_scripts_msgs.msg import StampedFloat32, StampedFloat32MultiArray
+from cv_bridge import CvBridge
 import message_filters
 
 
 H = 240
 W = 320
 FPS = 60
-MAX_GRIPPER_WIDTH = 110.
-DATASET_MAX_GRIPPER_WIDTH_M = 0.09
+MAX_GRIPPER_WIDTH = 82.
 CONTROL_FREQUENCY = 60.
 DATA_FREQUENCY = 10.
 SLOP = 0.02
@@ -67,28 +71,12 @@ def interpolate_between_actions (start_action, end_action, interpolation_factor)
     return action_interpolated
 
 
-def wsg_width_mm_to_policy_m(width_mm):
-    # Training zarr was built from normalized HDF5 qpos:
-    #   robot0_gripper_width = gripper_qpos * DATASET_MAX_GRIPPER_WIDTH_M
-    # where gripper_qpos = wsg_width_mm / MAX_GRIPPER_WIDTH.
-    width_normalized = width_mm / MAX_GRIPPER_WIDTH
-    width_m = width_normalized * DATASET_MAX_GRIPPER_WIDTH_M
-    return np.float32(np.clip(width_m, 0.0, DATASET_MAX_GRIPPER_WIDTH_M))
-
-
-def policy_width_m_to_wsg_mm(width_m):
-    width_normalized = width_m / DATASET_MAX_GRIPPER_WIDTH_M
-    width_mm = width_normalized * MAX_GRIPPER_WIDTH
-    return float(np.clip(width_mm, 0.0, MAX_GRIPPER_WIDTH))
-
-
 class DiffusionPolicyInference (Node):
     
-    def __init__ (self, ckpt_path, results_path, show_wrist=False):
+    def __init__ (self, ckpt_path, results_path):
 
         super().__init__('diffusion_policy_inference')
 
-        self.show_wrist = show_wrist
 
         if not os.path.exists(results_path):
             os.makedirs(results_path)
@@ -105,28 +93,23 @@ class DiffusionPolicyInference (Node):
         self.pipeline_1 = rs.pipeline()
         config_1 = rs.config()
         # config_1.enable_device('348522073794')  # wrist camera
-        config_1.enable_stream(rs.stream.color, W*2, H*2, rs.format.rgb8, FPS)
+        config_1.enable_stream(rs.stream.color, W*2, H*2, rs.format.bgr8, FPS)
         self.pipeline_1.start(config_1)
 
 
         # ===== diffusion policy init =====
 
         # load checkpoint
-        payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill, weights_only=False)
+        payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill)
         cfg = payload['cfg']
         cls = hydra.utils.get_class(cfg._target_)
 
         # if need to overwrite
         # cfg['policy']['num_inference_steps'] = 10
+        # self.n_action_steps = cfg['n_action_steps']
         self.n_action_steps = 8
         self.n_latency_steps = 1  # 0.1 seconds, should be more than enough
-        self.model_action_steps = self.n_action_steps + self.n_latency_steps
-        cfg['policy']['n_action_steps'] = self.model_action_steps  # match inference_umi_reference.py
-
-        self.cfg = cfg
-        self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
-        self.action_pose_repr = cfg.task.pose_repr.action_pose_repr
-        self.episode_start_pose = None
+        cfg['policy']['n_action_steps'] = self.n_action_steps + self.n_latency_steps  # overwrite
 
         # for interpolation and latency handling
         self.counter = 0
@@ -167,8 +150,22 @@ class DiffusionPolicyInference (Node):
         self.policy.eval()
         self.device = self.policy.device
 
+        self.rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
+
+        self.rot_quat2mat = RotationTransformerUMI(
+            from_rep='quaternion',
+            to_rep='matrix')
+        self.rot_aa2mat = RotationTransformerUMI(
+            from_rep='axis_angle',
+            to_rep='matrix')
+        self.rot_mat2rot6d = RotationTransformerUMI(
+            from_rep='matrix',
+            to_rep='rotation_6d')
+
 
         # ===== ros init =====
+
+        self.cvbridge = CvBridge()
 
         pose_sub = message_filters.Subscriber(self, StampedFloat32MultiArray, 'robot_pose')
         gripper_width_sub = message_filters.Subscriber(self, StampedFloat32, 'gripper_width')
@@ -190,8 +187,8 @@ class DiffusionPolicyInference (Node):
     def callback_sub (self, pose_msg, gripper_width_msg):
 
         # always update robot info for logging
-        self.cur_robot_pose = np.array(pose_msg.data, dtype=np.float32)
-        self.cur_gripper_width = float(np.array(gripper_width_msg.data).reshape(-1)[0])
+        self.cur_robot_pose = np.array(pose_msg.data)
+        self.cur_gripper_width = np.array(gripper_width_msg.data)
 
         # always prepare obs_dict for history
         cur_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
@@ -204,56 +201,33 @@ class DiffusionPolicyInference (Node):
 
         # always saves image
         self.wrist_images.append(wrist_image.copy())
-        wrist_image_vis = cv2.resize(wrist_image, (W, H))  # images are at higher resolution for visualization
+        wrist_image = cv2.resize(wrist_image, (W, H))  # images are at higher resolution for visualization
 
-        if self.show_wrist:
-            cv2.imshow('wrist', cv2.cvtColor(wrist_image_vis, cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+        cv2.imshow('wrist', wrist_image)
+        cv2.waitKey(1)
 
         # convert messages
-        robot_pose = self.cur_robot_pose.copy()
-        gripper_width = self.cur_gripper_width
+        robot_pose = np.array(pose_msg.data)
+        gripper_width = np.array(gripper_width_msg.data)
 
         # robot_pose is [x, y, z, rx, ry, rz]
         eef_pos = robot_pose[0:3].copy()
-        eef_rot_axis_angle = robot_pose[3:6].copy()
-        gripper_width_m = wsg_width_mm_to_policy_m(gripper_width)
+        eef_quat = R.from_rotvec(robot_pose[3:6]).as_quat()
 
-        camera_horizon = int(self.cfg.task.shape_meta.obs.camera0_rgb.horizon)
-        robot_horizon = int(self.cfg.task.shape_meta.obs.robot0_eef_pos.horizon)
-        gripper_horizon = int(self.cfg.task.shape_meta.obs.robot0_gripper_width.horizon)
+        # gripper_width is not normalized
+        gripper_qpos = np.array([gripper_width / MAX_GRIPPER_WIDTH, gripper_width / MAX_GRIPPER_WIDTH])
 
-        current_obs_sample = {
-            "camera0_rgb": wrist_image,
-            "robot0_eef_pos": eef_pos,
-            "robot0_eef_rot_axis_angle": eef_rot_axis_angle,
-            "robot0_gripper_width": np.array([gripper_width_m], dtype=np.float32),
-        }
-        history_times = np.array(self.history_timestamps + [cur_timestamp])
-        history_samples = self.history_obs_dicts + [current_obs_sample]
+        # create obs dict
+        np_obs_dict = dict()
 
-        def stack_history(key, horizon):
-            target_times = cur_timestamp - np.arange(horizon - 1, -1, -1) / DATA_FREQUENCY
-            indices = [
-                int(np.argmin(np.abs(history_times - target_time)))
-                for target_time in target_times
-            ]
-            return np.stack([history_samples[index][key] for index in indices], axis=0)
+        # fill in all input required by dp
+        np_obs_dict['wrist_camera'] = wrist_image.copy()
+        np_obs_dict['eef_pos'] = eef_pos
+        np_obs_dict['eef_quat'] = eef_quat
+        np_obs_dict['gripper_qpos'] = gripper_qpos
 
-        env_obs = {
-            "camera0_rgb": stack_history("camera0_rgb", camera_horizon),
-            "robot0_eef_pos": stack_history("robot0_eef_pos", robot_horizon),
-            "robot0_eef_rot_axis_angle": stack_history("robot0_eef_rot_axis_angle", robot_horizon),
-            "robot0_gripper_width": stack_history("robot0_gripper_width", gripper_horizon),
-        }
-
-        if self.episode_start_pose is None:
-            self.episode_start_pose = [
-                np.concatenate([
-                    env_obs["robot0_eef_pos"][-1],
-                    env_obs["robot0_eef_rot_axis_angle"][-1],
-                ])
-            ]
+        # swap axis for images and normalize
+        np_obs_dict['wrist_camera'] = np.swapaxes(np.swapaxes(np_obs_dict['wrist_camera'], 1, 2), 0, 1).astype(np.float32)/255.
 
         # only run inference if 
         # 1. the last action chunk (excluding latency steps) has been executed OR
@@ -271,39 +245,91 @@ class DiffusionPolicyInference (Node):
             # self.last_inference_timestamp = float(self.get_clock().now().nanoseconds) / 1e9
             # self.get_logger().info("Running inference at {} fps".format(cur_fps))
 
-            obs_dict_np = get_real_umi_obs_dict(
-                env_obs=env_obs,
-                shape_meta=self.cfg.task.shape_meta,
-                obs_pose_repr=self.obs_pose_rep,
-                tx_robot1_robot0=None,
-                episode_start_pose=self.episode_start_pose,
+            # to account for the two steps of observations
+            # shapes in np_obs_dict:
+            # - wrist_camera: (3, 240, 320)
+            # - front_camera: (3, 240, 320)
+            # - eef_pos: (3,)
+            # - eef_quat: (4,)
+            # - gripper_qpos: (2,)
+            # shapes to match:
+            # - wrist_camera: torch.Size([1, 2, 3, 240, 320])
+            # - front_camera: torch.Size([1, 2, 3, 240, 320])
+            # - eef_pos: torch.Size([1, 2, 3])
+            # - eef_quat: torch.Size([1, 2, 4])
+            # - gripper_qpos: torch.Size([1, 2, 2])
+
+            np_obs_dict_stacked = {}
+
+            # if no history available, stack current obs
+            if len(self.history_obs_dicts) == 0:
+                for key in np_obs_dict:
+                    np_obs_dict_stacked[key] = np.stack((np_obs_dict[key], np_obs_dict[key]), axis=0)
+            
+            # otherwise, get the frame that is the closest to cur_timestamp - 1./DATA_FREQUENCY (0.1s before current frame)
+            else:
+                frame_idx = np.argmin(np.abs((cur_timestamp - 1./DATA_FREQUENCY) - np.array(self.history_timestamps)))
+                # self.get_logger().info('history timestamps: {}'.format(self.history_timestamps))
+                # self.get_logger().info('cur_timestamp: {}'.format(cur_timestamp))
+                # self.get_logger().info('diffs: {}'.format(cur_timestamp - np.array(self.history_timestamps)))
+                # self.get_logger().info('selected index {}'.format(frame_idx))
+                np_obs_dict_old = self.history_obs_dicts[frame_idx]
+                # first the previous frame, then the current frame
+                for key in np_obs_dict:
+                    np_obs_dict_stacked[key] = np.stack((np_obs_dict_old[key], np_obs_dict[key]), axis=0)
+
+            # using relative action
+            current_pos = copy.copy(np_obs_dict_stacked['eef_pos'][-1])
+            current_rot_mat = copy.copy(self.rot_quat2mat.forward(np_obs_dict_stacked['eef_quat'][-1]))
+            T_world_baseframe = np.eye(4)
+            T_world_baseframe[:3, :3] = current_rot_mat.copy()
+            T_world_baseframe[:3, 3] = current_pos.copy()
+
+            # for key in np_obs_dict_stacked:
+            #     print(key, np_obs_dict_stacked[key].shape)
+
+            np_obs_dict_stacked['eef_pos'], np_obs_dict_stacked['eef_quat'] = compute_relative_pose(
+                pos=np_obs_dict_stacked['eef_pos'],
+                rot=np_obs_dict_stacked['eef_quat'],
+                base_pos=current_pos,
+                base_rot_mat=current_rot_mat,
+                rot_transformer_to_mat=self.rot_quat2mat,
+                rot_transformer_to_target=self.rot_mat2rot6d
             )
 
+            np_obs_dict_stacked = {
+                key: value[np.newaxis, :] for key, value in np_obs_dict_stacked.items()
+            }
+
             # device transfer
-            obs_dict = dict_apply(
-                obs_dict_np,
-                lambda x: torch.from_numpy(x).unsqueeze(0).to(device=self.device),
-            )
+            obs_dict = dict_apply(np_obs_dict_stacked, 
+                lambda x: torch.from_numpy(x).to(
+                    device=self.device))
 
             # run policy
             with torch.no_grad():
                 action_dict = self.policy.predict_action(obs_dict)
 
-            raw_action = action_dict["action"][0].detach().to("cpu").numpy()
-            action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
-            if len(action_chunk) > self.model_action_steps:
-                self.get_logger().warning(
-                    "Policy returned {} action steps after n_action_steps override; "
-                    "cropping to {} to match inference_umi_reference.py.".format(
-                        len(action_chunk), self.model_action_steps
-                    ),
-                    once=True,
-                )
-                action_chunk = action_chunk[:self.model_action_steps]
-            action_chunk = action_chunk.copy()
+            # device_transfer
+            np_action_dict = dict_apply(action_dict,
+                lambda x: x.detach().to('cpu').numpy())
 
+            action_chunk = np_action_dict['action'][0]
             if not np.all(np.isfinite(action_chunk)):
                 raise RuntimeError('Nan or Inf action')
+            
+            # action rotation transformer
+            action_pos, action_rot = compute_relative_pose(
+                pos=action_chunk[..., :3],
+                rot=action_chunk[..., 3: -1],
+                base_pos=current_pos,
+                base_rot_mat=current_rot_mat,
+                rot_transformer_to_mat=self.rot_aa2mat,
+                rot_transformer_to_target=self.rot_mat2rot6d,
+                backward=True
+            )
+            action_gripper = action_chunk[..., -1:]
+            action_chunk = np.concatenate([action_pos, action_rot, action_gripper], axis=-1)
 
             # # debug
             # print(np.round(robot_pose, 4))
@@ -316,12 +342,12 @@ class DiffusionPolicyInference (Node):
 
             # logging
             self.eef_positions.append(eef_pos)
-            self.predicted_action_chunks.append(action_chunk.copy())
+            self.predicted_action_chunks.append(action_chunk)
 
-            # Convert UMI policy gripper width in meters back to the WSG command in mm.
-            action_chunk[:, -1] = np.array([
-                policy_width_m_to_wsg_mm(width_m) for width_m in action_chunk[:, -1]
-            ], dtype=np.float32)
+            # convert gripper width back
+            # print('Predicted raw gripper width: {}'.format(action_chunk[:, -1]))
+            action_chunk[:, -1] *= MAX_GRIPPER_WIDTH
+            # print('Converted gripper width: {}'.format(action_chunk[:, -1]))
 
             # interpolate trajectory
             self.next_traj = []
@@ -372,7 +398,7 @@ class DiffusionPolicyInference (Node):
             self.history_timestamps.pop(0)
             self.history_obs_dicts.pop(0)
         self.history_timestamps.append(cur_timestamp)
-        self.history_obs_dicts.append(deepcopy(current_obs_sample))
+        self.history_obs_dicts.append(deepcopy(np_obs_dict))
 
     
     def callback_pub (self):
@@ -483,14 +509,11 @@ class DiffusionPolicyInference (Node):
 
 def main (args=None):
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--ckpt_path', '--ckpt-path', dest='ckpt_path', required=True)
-    parser.add_argument('--results_path', '--results-path', dest='results_path', required=True)
-    parser.add_argument('--show_wrist', '--show-wrist', dest='show_wrist', action='store_true')
-    parsed_args, ros_args = parser.parse_known_args(args)
+    ckpt_path = '/home/jingyixiang/diffusion_policy/data/outputs/2026.01.22/22.34.42_train_diffusion_unet_image_turn_knob_umi/checkpoints/latest.ckpt'
+    results_path = '/home/jingyixiang/diffusion_policy/data/inference/turn_konb_umi'
 
-    rclpy.init(args=ros_args)
-    dp_inference_node = DiffusionPolicyInference(parsed_args.ckpt_path, parsed_args.results_path, parsed_args.show_wrist)
+    rclpy.init(args=args)
+    dp_inference_node = DiffusionPolicyInference(ckpt_path, results_path)
     rclpy.spin(dp_inference_node)
 
     dp_inference_node.destroy_node()
