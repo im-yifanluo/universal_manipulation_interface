@@ -1,0 +1,59 @@
+name: umi-ros-humble
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  # ROS 2 Humble's apt-installed Python bindings are built for Python 3.10.
+  # Do not install rclpy from pip/conda; source /opt/ros/humble instead.
+  - python=3.10
+  - pip=22.1
+  # gym 0.21 has legacy package metadata that newer setuptools rejects.
+  - setuptools=65.5
+
+  # PyTorch / CUDA is installed from the official CUDA 12.8 wheel index below.
+  # CUDA 12.1 PyTorch 2.1 does not support RTX 50-series / sm_120 GPUs.
+
+  # UMI / diffusion-policy runtime dependencies.
+  - numpy=1.24
+  - scipy=1.11
+  - numba=0.57
+  - pandas=2.1
+  - matplotlib=3.7
+  - av=10.0
+  - pyyaml=6.0
+  - tqdm=4.65
+  - zarr=2.16
+  - numcodecs=0.11
+  - hydra-core=1.2.0
+  - wandb=0.15.8
+  - protobuf=4.25
+  - dill=0.3.7
+  - einops=0.6.1
+  - diffusers=0.18.2
+  - llvm-openmp=14
+  - python-lmdb=1.4
+  - timm=0.9.7
+  - cython=0.29
+  - accelerate=0.24
+  - boto3=1.33
+  - aiohttp=3.9
+  - aiofiles=23.2
+  - pip:
+    - --index-url https://download.pytorch.org/whl/cu128
+    - --extra-index-url https://pypi.org/simple
+    - torch==2.10.0
+    - torchvision==0.25.0
+    - protobuf==4.25.8
+    - huggingface-hub==0.25.2
+    - ray[default]==2.8.0
+    - threadpoolctl==3.2
+    - v4l2py==2.2
+    - atomics==1.0.2
+    - pynput==1.7.6
+    - fastcrc==0.2
+    - gym==0.21.0
+    - imagecodecs==2023.9.18
+    - opencv-python==4.7.0.72
+    - robomimic==0.2.0
+    - pyrealsense2

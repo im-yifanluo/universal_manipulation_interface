@@ -33,9 +33,21 @@ W = 320
 STARTING_POSE = np.array([0, -0.4, 0.4, 0, np.pi, 0])
 STARTING_GRIPPER_WIDTH = 105.
 MAX_GRIPPER_WIDTH = 110.
+DATASET_MAX_GRIPPER_WIDTH_M = 0.09
 DATA_FREQUENCY = 10.
+STEPS_PER_INFERENCE = 6
 SLOP = 0.02
 FPS = 30
+
+
+def wsg_width_mm_to_policy_m(width_mm):
+    width_m = width_mm / MAX_GRIPPER_WIDTH * DATASET_MAX_GRIPPER_WIDTH_M
+    return np.float32(np.clip(width_m, 0.0, DATASET_MAX_GRIPPER_WIDTH_M))
+
+
+def policy_width_m_to_wsg_mm(width_m):
+    width_mm = width_m * MAX_GRIPPER_WIDTH / DATASET_MAX_GRIPPER_WIDTH_M
+    return float(np.clip(width_mm, 0.0, MAX_GRIPPER_WIDTH))
 
 
 class DiffusionPolicyInference ():
@@ -95,6 +107,7 @@ class DiffusionPolicyInference ():
 
         self.cfg = cfg
         self.obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
+        self.n_action_steps = STEPS_PER_INFERENCE
         self.episode_start_pose = None
 
         self.policy.to(torch.device('cuda:0'))
@@ -187,8 +200,8 @@ class DiffusionPolicyInference ():
         # WSG reports width in mm; UMI observations use meters.
         info = self.wsg.script_query()
         gripper_width = info["position"]
-        gripper_width_m = np.float32(np.clip(gripper_width / 1000.0, 0.0, 0.09))
-        print(f"Gripper width (m): {gripper_width:.3f}")
+        gripper_width_m = wsg_width_mm_to_policy_m(gripper_width)
+        print(f"Gripper width: {gripper_width:.3f} mm -> policy {gripper_width_m:.4f} m")
 
         eef_pos = eef_pos.astype(np.float32)
         eef_rot_axis_angle = robot_pose[3:6].astype(np.float32)
@@ -241,7 +254,12 @@ class DiffusionPolicyInference ():
         # action_chunk[:, -1] *= MAX_GRIPPER_WIDTH
         
         raw_action = action_dict["action_pred"][0].detach().to("cpu").numpy()
-        action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
+        full_action_chunk = get_real_umi_action(raw_action, env_obs, self.action_pose_repr)
+        selected_action_indices = np.arange(
+            min(self.n_action_steps, len(full_action_chunk)),
+            dtype=np.int64,
+        )
+        action_chunk = full_action_chunk[selected_action_indices]
 
         if not np.all(np.isfinite(action_chunk)):
             raise RuntimeError("Nan or Inf action")
@@ -261,19 +279,21 @@ class DiffusionPolicyInference ():
             if not np.average(np.abs(target_pose[0:3] - np.array(self.rtde_r.getActualTCPPose())[0:3])) > 0.05:
                 self.rtde_c.servoL(target_pose, 0.01, 0.01, 1./DATA_FREQUENCY, 0.05, 100)  # params: pose, speed, accel, time, lookahead_time, gain
             
-            print(action[-1])
+            target_gripper_width = policy_width_m_to_wsg_mm(action[-1])
+            print(f"Predicted gripper: {action[-1]:.4f} m -> target {target_gripper_width:.2f} mm")
 
-            # target_gripper_width = np.clip(action[-1], 0.0, 0.09) * 1000.0
-            # # if the requested movement is too large, ignore it
-            # if not abs(target_gripper_width - gripper_width) > 40.:
-            #     info = self.wsg.script_position_pd(
-            #         position = target_gripper_width,
-            #         velocity = self.gripper_velocity, 
-            #         blocked_force_limit = 20, 
-            #         kp = self.gripper_kp, 
-            #         kd = self.gripper_kd,
-            #     )
-            #     gripper_width = info["position"]
+            # if the requested movement is too large, ignore it
+            if not abs(target_gripper_width - gripper_width) > 40.:
+                info = self.wsg.script_position_pd(
+                    position = target_gripper_width,
+                    velocity = self.gripper_velocity, 
+                    blocked_force_limit = 20, 
+                    kp = self.gripper_kp, 
+                    kd = self.gripper_kd,
+                )
+                gripper_width = info["position"]
+            else:
+                print(f"Skipping gripper target; requested jump is {target_gripper_width - gripper_width:.2f} mm")
             
             # sleep until next action execution
             cur_timestamp = time.monotonic()
