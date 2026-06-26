@@ -130,7 +130,7 @@ class DiffusionPolicyInference (Node):
         self.action_down_sample_steps = int(
             cfg.task.shape_meta.action.get('down_sample_steps', 1)
         )
-        self.policy_action_frequency = DATA_FREQUENCY / self.action_down_sample_steps
+        self.policy_action_frequency = DATA_FREQUENCY
         # DiffusionUnetTimmPolicy returns the full action horizon and has no
         # policy.n_action_steps config key; crop to model_action_steps after inference.
 
@@ -146,13 +146,13 @@ class DiffusionPolicyInference (Node):
         self.finished_cur_traj = False
         self.next_traj_ready = False
         self.last_action = None  # this is the last action in the previous action chunk
-        self.interpolation_factor = int(round(CONTROL_FREQUENCY / self.policy_action_frequency))
+        self.interpolation_factor = CONTROL_FREQUENCY / DATA_FREQUENCY
         self.cur_traj = []
         self.next_traj = []
 
         self.get_logger().info(
-            'Using policy action frequency {:.3f} Hz from base DATA_FREQUENCY {} Hz '
-            'and action.down_sample_steps {}. Interpolation factor: {}.'.format(
+            'Using policy action frequency {:.3f} Hz from DATA_FREQUENCY {} Hz. '
+            'Checkpoint action.down_sample_steps is {}. Interpolation factor: {}.'.format(
                 self.policy_action_frequency,
                 DATA_FREQUENCY,
                 self.action_down_sample_steps,
@@ -255,10 +255,9 @@ class DiffusionPolicyInference (Node):
 
         def stack_history(key, meta):
             horizon = int(meta.horizon)
-            down_sample_steps = int(meta.get('down_sample_steps', 1))
             target_times = (
                 cur_timestamp
-                - np.arange(horizon - 1, -1, -1) * down_sample_steps / DATA_FREQUENCY
+                - np.arange(horizon - 1, -1, -1) / DATA_FREQUENCY
             )
             indices = [
                 int(np.argmin(np.abs(history_times - target_time)))
