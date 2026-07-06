@@ -243,7 +243,9 @@ def main(input, output, robot_config,
             policy.eval().to(device)
 
             # ===== Prediction-only logging setup =====
-            pred_log_dir = pathlib.Path(output).expanduser()
+            output_path = pathlib.Path(output).expanduser()
+            run_name = output_path.name
+            pred_log_dir = pathlib.Path("data") / "eval_pred_only_logs" / run_name
             pred_log_dir.mkdir(parents=True, exist_ok=True)
             pred_log_path = pred_log_dir / f"pred_only_log_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
             pred_log_idx = 0

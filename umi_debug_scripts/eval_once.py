@@ -243,8 +243,12 @@ def main(input, output, robot_config,
             policy.eval().to(device)
 
             # ===== Prediction-only logging setup =====
-            pred_log_dir = pathlib.Path(output).expanduser()
+            output_path = pathlib.Path(output).expanduser()
+            run_name = output_path.name
+            pred_log_dir = pathlib.Path("data") / "eval_once_logs" / run_name
             pred_log_dir.mkdir(parents=True, exist_ok=True)
+            input_log_dir = pathlib.Path("data") / "eval_once_inference_inputs" / run_name
+            input_log_dir.mkdir(parents=True, exist_ok=True)
             pred_log_path = pred_log_dir / f"pred_only_log_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
             pred_log_idx = 0
             print("prediction-only log:", pred_log_path)
@@ -564,7 +568,7 @@ def main(input, output, robot_config,
                         current_pose = np.asarray(current_pose)
 
                         num_actions_executed = len(this_target_poses)
-                        input_log_path = pred_log_dir / f"inference_input_{pred_log_idx:06d}.npz"
+                        input_log_path = input_log_dir / f"inference_input_{pred_log_idx:06d}.npz"
                         pred_log_record = {
                             "phase": "policy",
                             "log_idx": int(pred_log_idx),

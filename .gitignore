@@ -186,3 +186,21 @@ videos/
 *.hdf5
 *.zarr.zip
 checkpoints/
+
+# Inference debugging scripts
+umi_debug_scripts/test_inference/*
+!umi_debug_scripts/test_inference/
+!umi_debug_scripts/test_inference/offline_inference.py
+!umi_debug_scripts/test_inference/offline_inference_robot_data.py
+!umi_debug_scripts/test_inference/offline_prediction.py
+
+# Stale custom inference scripts
+custom_inference_script/custom_inference.py
+custom_inference_script/inference_dummy_test.py
+
+# Conversion debugging scripts
+custom_data_pipeline/gripper_width_debug
+custom_data_pipeline/allen_key/custom_error_analysis copy 2.ipynb
+custom_data_pipeline/allen_key/validation_dataset
+custom_data_pipeline/allen_key/old_dataset
+custom_data_pipeline/allen_key/custom_offline_inference.py

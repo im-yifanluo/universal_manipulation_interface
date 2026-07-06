@@ -31,8 +31,8 @@ register_codecs()
 # ===== Variables =====
 
 CKPT_PATH = "checkpoints/latest.ckpt"
-INPUT_NPZ_PATH = "data/debug_grasp_cube_53/inference_input_000003.npz"
-OUTPUT_DIR = "data/debug_grasp_cube_53"
+INPUT_NPZ_PATH = "data/eval_once_inference_inputs/debug_grasp_cube_53/inference_input_000003.npz"
+OUTPUT_DIR = "data/offline_inference_robot_data_logs/debug_grasp_cube_53"
 DEVICE = "cuda:0"
 
 # ===== Inference Functions =====
@@ -134,7 +134,10 @@ def predict_from_npz(policy, cfg, npz_path, device):
 
 def get_output_path(npz_path, output_dir):
     npz_index = get_npz_index(npz_path)
-    output_dir = npz_path.parent if output_dir is None else pathlib.Path(output_dir)
+    if output_dir is None:
+        output_dir = pathlib.Path("data") / "offline_inference_robot_data_logs" / npz_path.parent.name
+    else:
+        output_dir = pathlib.Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir / f"offline_pred_{npz_index}.jsonl"
 
