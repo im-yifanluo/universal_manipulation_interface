@@ -183,6 +183,10 @@ cython_debug/
 # data files
 replay_buffer.zarr/
 videos/
+data/**/*.mp4
+data/**/*.mov
+data/**/*.avi
+data/**/*.mkv
 *.hdf5
 *.zarr.zip
 checkpoints/
