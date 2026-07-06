@@ -423,6 +423,11 @@ class DiffusionPolicyInference (Node):
                     "traj_step_mean_m": float(np.mean(traj_pos_steps)) if len(traj_pos_steps) else 0.0,
                     "traj_step_max_m": float(np.max(traj_pos_steps)) if len(traj_pos_steps) else 0.0,
                     "action_chunk_pos": action_chunk[:, :3].astype(float).tolist(),
+                    # full predicted action chunk, exactly as fed to the stitch/interpolation.
+                    # columns: [0:3]=eef pos (m), [3:6]=eef rot axis-angle (rad), [6]=gripper (WSG mm).
+                    # consecutive records reconstruct the stitch: prev["action_chunk_full"][-1]
+                    # (last_action) -> this record's action_chunk_full[n_latency_steps+1].
+                    "action_chunk_full": action_chunk.astype(float).tolist(),
                 }
                 with open(self.prediction_debug_path, 'a') as f:
                     f.write(json.dumps(debug_record) + '\n')

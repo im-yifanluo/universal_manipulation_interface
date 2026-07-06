@@ -4,6 +4,7 @@ This fork keeps the official UMI workflow, but adds custom data conversion, trai
 
 ## Main Differences
 
+Here are the main scripts on top of the original UMI repository:
 - HDF5-to-zarr converters for lab datasets.
 - Conda environments for H200, Blackwell and RTX 50-series, ROS Humble inference, and offline analysis.
 - Direct inference scripts for Allen key and knob-turn experiments.
@@ -34,6 +35,8 @@ robot0_demo_end_pose
 meta/episode_ends
 ```
 
+You can find these custom converting scripts in the `custom_data_pipeline` directory, and you can run them with the following commands:
+
 Allen key:
 
 ```bash
@@ -61,7 +64,7 @@ custom_data_pipeline/inspect_zarr.py
 
 ## Training
 
-Training uses the official `train.py`. I created these 2 new conda enviroments depending on the GPU used
+Training uses the official `train.py`. I created these 2 new conda enviroments depending on the GPU used:
 
 ```bash
 # H200 from NCSA
@@ -75,6 +78,10 @@ conda activate blackwell-train
 # single GPU
 python train.py --config-name=train_diffusion_unet_timm_umi_workspace task.dataset_path=path/to/dataset.zarr.zip
 ```
+
+The training parameters can be changed in the `diffusion_policy/config/task/umi.yaml` file. Currently, the downsampling is kept at the original value of 3. However, if you are using an already downsampled dataset, change that value to 1 in `obs_down_sample_steps: 1 # 3, 1`.
+
+Also note that the epochs is changed to 400, and the batch size is kept at 64.
 
 ## Inference
 
@@ -101,18 +108,23 @@ Note that the gripper conversion uses `MAX_GRIPPER_WIDTH = 110.0` and `DATASET_M
 
 ### Direct Scripts
 
+This repository contains inference scripts that do not require ROS 2. These scripts are in the `custom_inference_script` directory, and have the following uses:
+
 - `custom_inference_script/inference_simple_allen_key.py`: Direct Allen key inference script
 - `custom_inference_script/inference_simple_knob.py`: Direct knob-turn inference script
-- `custom_inference_script/inference_simple.py`: Reference script
-- `execute_command.py`: Initial position adjustment
+- `custom_inference_script/inference_simple.py`: Reference script which the above two scripts are created from.
+
+There is also a script that moves to an initial position. The values are hard coded in the script, in `execute_command.py`.
 
 Before running direct scripts, check checkpoint paths.
 
 ## Debugging Scripts
 
-- `umi_debug_scripts/eval_once.py`: Live hardware script that logs prediction summaries and saves exact model input `.npz` files.
+Certain debugging scripts that might be useful are in the `umi_debug_scripts`. The `eval_*.py` scripts are adapted from `eval_real.py` and will execute actions on the robot, while the `offline_*.py` are offline scripts.
 
-- `umi_debug_scripts/eval_pred_only.py`: Live hardware script that logs prediction summaries and can execute actions.
+- `umi_debug_scripts/eval_once.py`: After you press c to start, it waits for you to press n for each inference step. Each time you you press n, it does one prediction, logs it, and executes that one action horizon.
+
+- `umi_debug_scripts/eval_pred_only.py`: Live hardware script that logs prediction summaries and can execute actions. Specifically, it runs exactly one prediction pass and executes one action horizon.
 
 - `umi_debug_scripts/test_inference/offline_inference.py`: Offline script that runs checkpoint inference on dataset samples.
 
