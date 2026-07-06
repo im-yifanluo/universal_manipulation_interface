@@ -1,3 +1,7 @@
+"""
+CUSTOM: This is the custom ROS 2 inference script
+"""
+
 import time
 import argparse
 import json
@@ -547,7 +551,7 @@ def main (args=None):
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpt_path', '--ckpt-path', dest='ckpt_path', required=True)
-    parser.add_argument('--results_path', '--results-path', dest='results_path', required=True)
+    parser.add_argument('--results_path', '--results-path', dest='results_path', default='data/turn_knob_ros_logs')
     parser.add_argument('--show_wrist', '--show-wrist', dest='show_wrist', action='store_true')
     parsed_args, ros_args = parser.parse_known_args(args)
 

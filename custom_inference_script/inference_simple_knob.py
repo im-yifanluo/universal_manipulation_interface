@@ -122,7 +122,7 @@ class DiffusionPolicyInference ():
         self.ckpt_n_action_steps = int(cfg.get("n_action_steps", cfg.task.shape_meta.action.horizon))
         self.episode_start_pose = None
         self.prediction_log_idx = 0
-        prediction_log_dir = REPO_ROOT / "prediction_logs"
+        prediction_log_dir = REPO_ROOT / "data" / "turn_knob_simple_logs"
         prediction_log_dir.mkdir(parents=True, exist_ok=True)
         prediction_log_path = prediction_log_dir / f"knob_predictions_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
         self.prediction_logger = JsonLogger(str(prediction_log_path), filter_fn=lambda k, v: True)

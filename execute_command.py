@@ -1,3 +1,7 @@
+"""
+CUSTOM: Moves to the target pose
+"""
+
 import rtde_control
 import rtde_receive
 
