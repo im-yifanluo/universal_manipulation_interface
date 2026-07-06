@@ -5,6 +5,8 @@ CUSTOM: Moves to the target pose
 import rtde_control
 import rtde_receive
 
+from umi.real_world.wsg_binary_driver import WSGBinaryDriver
+
 # ur_rtde documentation:
 # https://sdurobotics.gitlab.io/ur_rtde/
 
@@ -21,4 +23,8 @@ TARGET_POSE = [0.20669906558882908, -0.417885510409134, 0.23847880941700456, 0.0
 # TARGET_POSE = [0.36956118287564493, -0.5474824728253321, -0.024981345032776762, -0.2512174384332913, -3.0265238435740014, 0.16983331746829397]
 
 # this will move the robot to the target pose
-rtde_c.moveL(TARGET_POSE, 0.1, 0.1)  # pose, speed, acceleration, asynchronous
+# rtde_c.moveL(TARGET_POSE, 0.1, 0.1)  # pose, speed, acceleration, asynchronous
+wsg = WSGBinaryDriver(hostname="192.168.1.20", port=1000)
+wsg.__enter__()
+wsg.ack_fault()
+wsg.homing(positive_direction=True, wait=True)
