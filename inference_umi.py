@@ -130,7 +130,9 @@ class DiffusionPolicyInference (Node):
         # cfg['policy']['num_inference_steps'] = 10
         self.n_action_steps = 8
         self.n_latency_steps = 1
-        self.model_action_steps = self.n_action_steps + self.n_latency_steps
+        # skip extra chunk steps at the stitch so entry lands ahead of the lagging robot (fixes backward-seam jitter)
+        self.stitch_skip_extra = 3
+        self.model_action_steps = self.n_action_steps + self.n_latency_steps + self.stitch_skip_extra
         self.action_down_sample_steps = int(
             cfg.task.shape_meta.action.get('down_sample_steps', 1)
         )
@@ -368,7 +370,8 @@ class DiffusionPolicyInference (Node):
             else:
                 # self.last_action is not included as part of the current traj because it was already included in the last traj
                 # using action_chunk[self.n_latency_steps + 1] instead of self.n_latency_steps because robot has 0.1s lookahead time
-                action_interpolated = interpolate_between_actions(self.last_action, action_chunk[self.n_latency_steps + 1], self.interpolation_factor)
+                entry_idx = self.n_latency_steps + 1 + self.stitch_skip_extra
+                action_interpolated = interpolate_between_actions(self.last_action, action_chunk[entry_idx], self.interpolation_factor)
                 self.next_traj += action_interpolated
 
                 # # to make actions smoother, interpolate from current robot pose
@@ -377,7 +380,7 @@ class DiffusionPolicyInference (Node):
                 # self.next_traj += action_interpolated
 
                 # interpolate the rest of cur_action_chunk
-                for i in range (self.n_latency_steps + 1, len(action_chunk)-1):
+                for i in range (entry_idx, len(action_chunk)-1):
                     action_interpolated = interpolate_between_actions(action_chunk[i], action_chunk[i+1], self.interpolation_factor)
                     self.next_traj += action_interpolated
 
@@ -410,6 +413,9 @@ class DiffusionPolicyInference (Node):
                     "policy_action_frequency": float(self.policy_action_frequency),
                     "interpolation_factor": float(self.interpolation_factor),
                     "eef_pos": eef_pos.astype(float).tolist(),
+                    # full observed state at this inference (for rot/gripper seam verification)
+                    "obs_robot_pose": robot_pose.astype(float).tolist(),
+                    "obs_gripper_width_mm": float(gripper_width),
                     "first_target_pos": action_chunk[0, :3].astype(float).tolist(),
                     "first_target_dist_m": float(np.linalg.norm(action_chunk[0, :3] - eef_pos)),
                     "last_action_dist_m": (
@@ -531,16 +537,16 @@ class DiffusionPolicyInference (Node):
 
             # check status
             # if this is the first trajectory, the length of the trajectory should be:
-            #   (n_action_steps + n_latency_steps - 1) * interpolation_factor + 1;
+            #   (model_action_steps - 1) * interpolation_factor + 1;
             # and the number of steps excluding the latency steps should be:
-            #   (n_action_steps - 1) * interpolation_factor + 1.
+            #   (model_action_steps - 1 - n_latency_steps) * interpolation_factor + 1.
             # if this is not the first trajectory, the length of the trajectory should be:
             #   (n_action_steps - 1) * interpolation_factor (the -1 is because of 0.1s robot lookahead time)
             # and the number of steps exluding the latency steps should be:
             #   (n_action_steps - 1 - n_latency_steps) * interpolation_factor
 
-            if len(self.cur_traj) == (self.n_action_steps + self.n_latency_steps - 1) * self.interpolation_factor + 1:
-                if self.traj_idx == (self.n_action_steps - 1) * self.interpolation_factor + 1:  # use == and not >= to trigger this only once
+            if len(self.cur_traj) == (self.model_action_steps - 1) * self.interpolation_factor + 1:
+                if self.traj_idx == (self.model_action_steps - 1 - self.n_latency_steps) * self.interpolation_factor + 1:  # use == and not >= to trigger this only once
                     self.finished_cur_action_chunk = True  # this is the signal that inference should run again
                     self.get_logger().info('Signaling next inference at trajectory index {}.'.format(self.traj_idx))
             else:
